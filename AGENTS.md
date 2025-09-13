@@ -1,278 +1,346 @@
-# Goal
 
-A tiny end‑to‑end demo:
+Connector 
+```mermaid
+classDiagram
+  class ConnectorApp {
+    +state: Map<string,SandboxPage>
+    +createSandbox(seedUrl?): string
+    +renderChat(id): JSX
+  }
 
-1. A Cloudflare Worker validates a **key** and, if correct, returns a **magic word**.
-2. A GitHub Pages site (static HTML+JS) asks for **Worker URL** and **Key**, sends a request, and displays the returned magic word.
+  class SandboxPage {
+    +id: string
+    +title: string
+    +homeUrl: string
+    +cookieJar: CookieStore
+    +history: UrlHistory
+    +settings: SandboxSettings
+    +navigate(url, method="GET", body?, headers?): Promise<Response>
+    +renderDocument(resp): void
+  }
 
-Everything here is copy‑paste runnable—no build tools.
+  class CookieStore {
+    +getCookieHeader(url): string
+    +applySetCookie(url, setCookieHeader): void
+    +load(): Promise<void>
+    +save(): Promise<void>
+  }
+
+  class UrlHistory {
+    +back(): string
+    +forward(): string
+    +push(url): void
+  }
+
+  class SandboxSettings {
+    +sessionId: string    // shared with Worker
+    +corsMode: "pinned" | "star"
+    +rewriteMode: "auto" | "off" // HTML rewriter on Worker
+  }
+
+  class ServiceWorkerProxy {
+    +install()
+    +rewriteRequest(req): Request // to Worker /p or /fetch with sessionId
+    +handleSetCookie(resp): void  // from custom header
+  }
+
+  ConnectorApp "1" o-- "*" SandboxPage
+  SandboxPage "1" --> "1" CookieStore
+  SandboxPage "1" --> "1" UrlHistory
+  ConnectorApp "1" --> "1" ServiceWorkerProxy
+```
+
+```mermaid
+flowchart TD
+  subgraph Worker["Cloudflare Worker"]
+    P["GET /p?sid=..&u=.. (media/GET/HEAD)"]
+    F["POST /fetch (JSON: target, method, headers, bodyB64, sid)"]
+    H["Header Filter & Range Support"]
+    C["Cookie Adapter:<br/>req: Cookie from SessionDO<br/>resp: capture Set-Cookie → X-Set-Cookie"]
+    D["SessionDO (per sid)<br/>- cookies map<br/>- lastUsed<br/>- small LRU eviction"]
+  end
+
+  subgraph Upstream["Target Site (HTTPS)"]
+    U["Any content: HTML, JSON, images, video, HLS, DASH"]
+  end
+
+  P --> C --> H --> U
+  F --> C --> H --> U
+  U --> H --> C
+  C --> D
+```
+
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant UI as SandboxPage (UI)
+  participant SW as Service Worker (Connector)
+  participant W as Worker (/p or /fetch)
+  participant DO as SessionDO (cookies by sid)
+  participant A as A.com (HTTPS)
+
+  Note over UI,SW: sessionId = per-sandbox GUID
+
+  rect rgb(245,245,255)
+  UI->>SW: media elements GET /p (img/video w/ Range)
+    SW->>W: GET /p?sid=SID&u=...
+    W->>DO: get cookies(SID)
+    W->>A: GET https://A.com/.. (Cookie: ... ; Range if provided)
+    A-->>W: 200/206 Stream + Set-Cookie?
+    W->>DO: merge Set-Cookie into jar
+    W-->>SW: 200/206 Stream (+ X-Set-Cookie for SW)
+    SW-->>UI: stream to element
+  end
+
+  rect rgb(245,255,245)
+    UI->>SW: navigate(url) → POST /fetch {sid,target,method,headers,bodyB64}
+    SW->>W: POST /fetch ...
+    W->>DO: cookies(SID)
+    W->>A: fetch(target,...)
+    A-->>W: status+headers+body (stream)
+    W->>DO: merge Set-Cookie
+    W-->>SW: stream + X-Set-Cookie
+    SW-->>UI: deliver; UI updates cookieJar/history
+  end
+```
+
+Design
+```mermaid
+flowchart LR
+  subgraph UI["Connector (React + Service Worker)"]
+    CH["Chat Threads"] --> SP["SandboxPage (per site)"]
+    SP --> SWp["ServiceWorkerProxy"]
+    SP --> DB["IndexedDB (cookies, history, settings)"]
+    SP --> VP["Viewer Panel (HTML)"]
+    SP --> ME["Media Elements (img/video/audio/iframe)"]
+  end
+
+  subgraph EDGE["Cloudflare Edge"]
+    WK["Worker: /p, /fetch"]
+    DO["Durable Object: SessionDO (cookies per sid)"]
+    CF["Edge Cache (media/static)"]
+    HR["HTMLRewriter (optional)"]
+  end
+
+  subgraph ORG["Target Origins"]
+    A["A.com"]
+    Others["Any https://host"]
+  end
+
+  ME -- GET /p?sid&u --> WK
+  VP -- POST /fetch --> WK
+  WK --- DO
+  WK --- CF
+  WK -. optional .-> HR
+  WK --> A
+  WK --> Others
+
+  SWp <--> WK:::warmup
+  SWp:::warmup -- warm-up / rewrites --> WK
+  DB --> SP
+```
+
+> **Important:** This project is split into **two independent repositories**. Do **not** colocate their code. Each repo can be built, tested, and deployed on its own. Integration happens strictly via the **public HTTP contract** defined below.
 
 ---
 
-## 1) Cloudflare Worker (Modules syntax)
+# IMPORTANT (USER)
+You are at the worker repo, read above the design file, and work on worker only, here include connector is only for you to take reference. It is a browser in browser application, with cloudflare be the middle person.
 
-**File:** `worker.js` (or paste into CF Dashboard → Workers → Create → Quick edit)
+Below, everything is AI generated, take consideration.
 
-> Set a secret named `KEY` with your shared key (Dashboard → Settings → Variables → Secrets → `KEY`) and an environment variable (optional) named `MAGIC_WORD` (defaults to `swordfish`).
+---
 
-```js
-// Worker entrypoint (Modules syntax)
-export default {
-  async fetch(request, env, ctx) {
-    const ALLOW_ORIGIN = '*'; // For quick testing. Replace with your GitHub Pages origin for stricter CORS.
+## Repo A — Connector (GitHub Pages)
 
-    // CORS preflight
-    if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          'Access-Control-Allow-Origin': ALLOW_ORIGIN,
-          'Access-Control-Allow-Methods': 'POST, OPTIONS',
-          'Access-Control-Allow-Headers': 'Content-Type',
-          'Access-Control-Max-Age': '86400',
-        },
-      });
-    }
+**Repository:** `connector-router-ui` (static site: React + TypeScript + Vite)
+**Deploy target:** GitHub Pages (branch `gh-pages`)
+**Purpose:** Chat‑style UI that treats each chat thread as a **SandboxPage** (its own cookie jar/history). All network requests are proxied to the Worker using two endpoints: `GET /p` and `POST /fetch`.
 
-    const url = new URL(request.url);
-    if (url.pathname !== '/magic') {
-      return new Response(JSON.stringify({ ok: false, error: 'Not found' }), {
-        status: 404,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': ALLOW_ORIGIN,
-        },
-      });
-    }
+### A.1 Deliverables
 
-    if (request.method !== 'POST') {
-      return new Response(JSON.stringify({ ok: false, error: 'Use POST' }), {
-        status: 405,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': ALLOW_ORIGIN,
-        },
-      });
-    }
+* Chat‑style interface with a sidebar of sandboxes (tabs) and a main viewer pane.
+* **OOP model:** `SandboxPage` (per‑site sandbox), `CookieStore` (IndexedDB), `UrlHistory`.
+* **Service Worker** (`proxy-sw.ts`): warms TLS/H2 to Worker, forwards responses, reads `X-Set-Cookie` and posts updates to the page.
+* Media elements (`<img>`, `<video>`, `<audio>`, `<iframe>`) use the Worker’s `/p` endpoint with `sid`.
+* Programmatic navigation/API calls use the Worker’s `/fetch`.
 
-    // Expect JSON: { key: "..." }
-    let body;
-    try {
-      body = await request.json();
-    } catch (e) {
-      return new Response(JSON.stringify({ ok: false, error: 'Invalid JSON' }), {
-        status: 400,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': ALLOW_ORIGIN,
-        },
-      });
-    }
+### A.2 Public Config
 
-    const provided = String(body?.key ?? '');
-    const expected = String(env.KEY ?? '');
+* `VITE_WORKER_BASE`: e.g. `https://<worker-subdomain>.workers.dev`
+* `CONNECTOR_ORIGIN`: the site origin (used by Worker CORS; mirrored in docs only)
 
-    if (!expected) {
-      return new Response(JSON.stringify({ ok: false, error: 'KEY not configured on server' }), {
-        status: 500,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': ALLOW_ORIGIN,
-        },
-      });
-    }
+### A.3 Stable Client → Worker Contract
 
-    if (provided !== expected) {
-      return new Response(JSON.stringify({ ok: false, error: 'Unauthorized' }), {
-        status: 401,
-        headers: {
-          'Content-Type': 'application/json',
-          'Access-Control-Allow-Origin': ALLOW_ORIGIN,
-        },
-      });
-    }
+* **GET** `${VITE_WORKER_BASE}/p?sid=<sid>&u=<base64url(absolute_https_url)>`
+  Usage: images/video/audio/iframe and simple GET/HEAD. Browser may send `Range`.
 
-    const magic = String(env.MAGIC_WORD ?? 'swordfish');
-    return new Response(JSON.stringify({ ok: true, magic }), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        // CORS
-        'Access-Control-Allow-Origin': ALLOW_ORIGIN,
-        'Vary': 'Origin',
-        // Cache off for demo
-        'Cache-Control': 'no-store',
-      },
-    });
-  },
-};
-```
+* **POST** `${VITE_WORKER_BASE}/fetch` with JSON body:
 
-**Configure Secrets:**
+  ```json
+  {
+    "sid": "sandbox-uuid",
+    "target": "https://host/path",
+    "method": "GET|POST|HEAD",
+    "headers": { "Accept": "..." },
+    "bodyB64": "..." // optional
+  }
+  ```
 
-* Dashboard → *Settings → Variables → Secrets* → **Add** `KEY` → put your chosen test key.
-* (Optional) Add plain-text Env Var `MAGIC_WORD` → your chosen word.
+**Response headers exposed by Worker** (read-only on the Connector):
+`Content-Type, Content-Length, Accept-Ranges, Content-Range, ETag, Last-Modified, X-Set-Cookie`.
 
-**Endpoint:** `POST https://<your-worker-subdomain>.<your-account>.<region>.workers.dev/magic`
+### A.4 Key Classes (skeleton requirements)
 
-Payload:
+* `SandboxPage.ts`
 
-```json
-{ "key": "YOUR_KEY" }
-```
+  * Props: `id (sid)`, `homeUrl`, `title`, `history`, `cookieStore`.
+  * Methods: `navigate(url, init?)`, `renderDocument(resp)`.
+* `CookieStore.ts`
 
-**Quick cURL test:**
+  * Methods: `applyFromHeader(xSetCookie)`, `getDisplay(host)`, `load()`, `save()`.
+* `UrlHistory.ts`
+
+  * Methods: `push(url)`, `back()`, `forward()`.
+* `ConnectorApp.tsx`
+
+  * Create/delete sandboxes; per‑sandbox URL bar + output pane.
+* `sw/proxy-sw.ts`
+
+  * Install/activate; `postMessage('warmup')` support; capture `X-Set-Cookie` and forward to clients.
+
+### A.5 Commands
 
 ```bash
-curl -i \
-  -H "Content-Type: application/json" \
-  -X POST \
-  -d '{"key":"YOUR_KEY"}' \
-  https://<your-worker>.workers.dev/magic
+# dev
+npm i
+npm run dev
+# build for GH Pages
+npm run build
+# deploy via Actions to gh-pages (include sample workflow in repo)
 ```
 
----
+### A.6 Acceptance (Connector‑only, stub Worker)
 
-## 2) GitHub Pages connector (one static file)
-
-**File:** `index.html` (place in your `gh-pages` branch or your Pages root)
-
-```html
-<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>CF Worker Connectivity Test</title>
-  <style>
-    :root { font: 16px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica, Arial; }
-    body { margin: 0; background: #0f172a; color: #e5e7eb; display: grid; place-items: center; min-height: 100vh; }
-    .card { width: min(680px, 92vw); background: #111827; border: 1px solid #374151; border-radius: 16px; padding: 20px 20px 16px; box-shadow: 0 10px 30px rgba(0,0,0,.35); }
-    h1 { font-size: 1.25rem; margin: 0 0 12px; }
-    p.hint { margin-top: 0; color: #9ca3af; }
-    label { display: block; margin: 14px 0 6px; color: #cbd5e1; }
-    input { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #334155; background: #0b1220; color: #e5e7eb; }
-    .row { display: flex; gap: 8px; margin-top: 14px; }
-    button { cursor: pointer; padding: 10px 14px; border-radius: 10px; border: 1px solid #22c55e; background: #16a34a; color: #052e16; font-weight: 700; }
-    button:disabled { opacity: .6; cursor: not-allowed; }
-    .out { margin-top: 16px; padding: 12px; border-radius: 10px; background: #0b1220; border: 1px dashed #475569; min-height: 2.5rem; white-space: pre-wrap; word-break: break-word; }
-    .ok { color: #34d399; }
-    .err { color: #fca5a5; }
-    small { color: #94a3b8; }
-  </style>
-</head>
-<body>
-  <div class="card">
-    <h1>Cloudflare Worker Connectivity Test</h1>
-    <p class="hint">Enter your Worker URL and shared key. We’ll POST to <code>/magic</code> and display the response.</p>
-
-    <label for="url">Worker URL (include <code>/magic</code>)</label>
-    <input id="url" placeholder="https://<your-worker>.workers.dev/magic" />
-
-    <label for="key">Key</label>
-    <input id="key" type="password" placeholder="YOUR_KEY" />
-
-    <div class="row">
-      <button id="go">Send</button>
-      <button id="ping" title="Sends a JSON POST with your key and shows the result.">Ping</button>
-    </div>
-
-    <div class="out" id="out"></div>
-    <small>Tip: For production, lock CORS to your Pages origin instead of <code>*</code>.</small>
-  </div>
-
-  <script>
-    const $ = (id) => document.getElementById(id);
-
-    async function call() {
-      const url = $('url').value.trim();
-      const key = $('key').value;
-      const out = $('out');
-
-      if (!url) { out.textContent = 'Please enter the full Worker endpoint URL (ending with /magic).'; return; }
-      if (!key) { out.textContent = 'Please enter a key.'; return; }
-
-      $('go').disabled = true; $('ping').disabled = true; out.textContent = 'Sending…';
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ key })
-        });
-        const text = await res.text();
-        let data;
-        try { data = JSON.parse(text); } catch (e) { data = { ok:false, error:'Non-JSON response', raw:text }; }
-
-        if (res.ok && data?.ok) {
-          out.innerHTML = `<span class="ok">✅ Success!</span> Magic word: <strong>${String(data.magic)}</strong>`;
-        } else {
-          out.innerHTML = `<span class="err">❌ Error ${res.status}</span> ${data?.error ?? text}`;
-        }
-      } catch (e) {
-        out.innerHTML = `<span class="err">❌ Network error</span> ${e?.message ?? e}`;
-      } finally {
-        $('go').disabled = false; $('ping').disabled = false;
-      }
-    }
-
-    $('go').addEventListener('click', call);
-    $('ping').addEventListener('click', call);
-
-    // Optional: persist last used URL in localStorage
-    (function init() {
-      const last = localStorage.getItem('cf_magic_url');
-      if (last) $('url').value = last;
-      $('url').addEventListener('change', () => localStorage.setItem('cf_magic_url', $('url').value.trim()));
-    })();
-  </script>
-</body>
-</html>
-```
-
-> If your worker URL is `https://demo-worker.yourname.workers.dev`, the input should be `https://demo-worker.yourname.workers.dev/magic`.
+* Hitting `/p` for a public image returns and renders.
+* `<video>` seeks via `Range` (206) through `/p`.
+* Posting to `/fetch` returns HTML/JSON rendered in the viewer.
 
 ---
 
-## 3) Deploy steps (quick)
+## Repo B — Worker (Cloudflare Workers)
 
-1. **Create Worker**: CF Dashboard → Workers & Pages → Create Worker → *Quick edit* → paste **worker.js** → **Deploy**.
-2. **Set secrets**: *Settings → Variables → Secrets* → add `KEY`. (Optional env var `MAGIC_WORD`.)
-3. **Open your Pages site** (e.g., `https://<username>.github.io/connect-test/`) and paste the Worker endpoint and key.
+**Repository:** `router-worker-edge` (TypeScript + Hono)
+**Deploy target:** Cloudflare Workers (`*.workers.dev`)
+**Purpose:** Low‑latency HTTPS proxy with minimal validation, streaming, range support, and optional **Durable Object (SessionDO)** for per‑sandbox cookies.
 
----
+### B.1 Deliverables
 
-## 4) Notes & Hardening (after it works)
+* Route: **`GET /p`** for media/GET/HEAD with `Range` passthrough.
+* Route: **`POST /fetch`** for JSON control plane (HTML/API/POST bodies).
+* Header filtering both ways (strip hop‑by‑hop; expose safe headers).
+* CORS: `Access-Control-Allow-Origin` pinned to connector origin (or `*` if no credentials).
+* **Optional:** `SessionDO` cookie jar keyed by `sid`, emitting `X-Set-Cookie`.
 
-* **CORS**: Replace `'*'` with your exact origin (e.g., `https://<username>.github.io`). Add `Access-Control-Allow-Credentials` only if using cookies (not needed here).
-* **Rate limiting**: Add a simple bucket using Durable Objects or KV-backed counters if you expose publicly.
-* **HTTPS only**: Both sides already use HTTPS; avoid mixed content by always using `https://` in the Worker URL field.
-* **No secrets in client**: The *shared key* is typed by you each time; don’t bake it into the page.
+### B.2 Environment / Config
 
----
+* `CONNECTOR_ORIGIN` (exact origin string to allow via CORS; or `*`).
+* **Optional DO binding:** `SESSION_DO` → class `SessionDO`.
 
-## 5) Troubleshooting quicklist
+### B.3 Request Handling Rules
 
-* **CORS error in console**: Make sure the Worker sends `Access-Control-Allow-Origin` and honors `OPTIONS` preflight.
-* **401 Unauthorized**: Verify the value of `KEY` secret in Worker matches what you type on the page.
-* **404**: Ensure your input URL ends with `/magic` (as coded above).
-* **JSON error**: The page sends JSON. Confirm `Content-Type: application/json` handling in the Worker.
+* Validate **absolute `https://`** target URLs only.
+* Allow **methods**: `GET|HEAD|POST`.
+* For `/p`: accept `sid`, `u` (base64url target), copy `Range` header as‑is.
+* For `/fetch`: parse JSON, copy allowed request headers and optional `bodyB64`.
+* Upstream fetch with `redirect: 'follow'`; set `cf` caching hints (toggle).
+* Response: stream body; forward **safe** headers:
+  `Content-Type, Content-Length, Accept-Ranges, Content-Range, ETag, Last-Modified`.
+* **Cookies:** Never forward raw `Set-Cookie` to the browser. If DO is enabled, merge into jar and emit consolidated `X-Set-Cookie` (URL‑encoded) for the SW to mirror.
 
----
+### B.4 Files
 
-## 6) (Optional) Wrangler local/dev
+* `src/index.ts` — Hono app with `/p`, `/fetch`, shared helpers (validation, header filters, base64url utils).
+* `src/session_do.ts` — (optional) per‑sid cookie map with `getCookieHeader(url)` & `mergeSetCookies(url, setCookieHeaders[])`.
+* `wrangler.toml` — name, bindings, `CONNECTOR_ORIGIN`, DO binding (optional), `compatibility_date`.
 
-If you prefer wrangler:
-
-```toml
-# wrangler.toml
-name = "magic-test"
-main = "worker.js"
-compatibility_date = "2024-09-01"
-```
+### B.5 Commands
 
 ```bash
-wrangler secret put KEY
-wrangler publish
+npm i
+npx wrangler dev
+npx wrangler deploy
 ```
 
-That's it—paste your endpoint + key into the GitHub Pages tester and you should see the magic word.
+### B.6 Acceptance (Worker‑only)
+
+* `curl` image via `/p?u=...` returns bytes with correct `Content-Type`.
+* `curl` with `Range` returns `206` and proper `Content-Range`.
+* `/fetch` relays HTML/JSON with status passthrough.
+* If DO enabled: repeated requests show cookies persisted per `sid`.
+
+---
+
+## Integration: Contract Recap (Read‑only in both repos)
+
+* **Endpoints:**
+
+  * `GET /p?sid=<sid>&u=<base64url(absolute_https_url)>`
+  * `POST /fetch` with body `{ sid, target, method, headers, bodyB64? }`
+* **Worker Response Policy:**
+
+  * CORS: allow Connector origin (or `*`).
+  * Expose headers: `Content-Type, Content-Length, Accept-Ranges, Content-Range, ETag, Last-Modified, X-Set-Cookie`.
+  * No raw `Set-Cookie` to client; use `X-Set-Cookie` if cookies are supported.
+* **Latency:** All bodies streamed; Range passthrough; optional edge cache for media.
+
+---
+
+## Prompts for Codex — Use the Right Repo
+
+### For Repo A (Connector)
+
+> **Generate a React + Vite app** named `connector-router-ui` with:
+>
+> * Classes: `SandboxPage.ts`, `CookieStore.ts`, `UrlHistory.ts` under `src/app/`.
+> * `ConnectorApp.tsx` (chat‑style UI) and `main.tsx`.
+> * `sw/proxy-sw.ts` service worker registered from `main.tsx`.
+> * An `.env` entry `VITE_WORKER_BASE` used wherever requests are sent.
+> * In the viewer, load media by setting `src` to `${VITE_WORKER_BASE}/p?sid=...&u=...` and fetch HTML/API via `${VITE_WORKER_BASE}/fetch`.
+> * Provide minimal CSS for a chat‑like layout (sidebar + pane).
+
+### For Repo B (Worker)
+
+> **Generate a Hono Worker** named `router-worker-edge` with routes `/p` and `/fetch`:
+>
+> * Validate https targets; allow only GET|HEAD|POST; strip hop‑by‑hop headers.
+> * `/p` supports `Range`; forward/return `Accept-Ranges` and `Content-Range`.
+> * Stream responses; set `Access-Control-Allow-Origin` to `CONNECTOR_ORIGIN` (or `*`).
+> * `Access-Control-Expose-Headers` includes `Content-Type, Content-Length, Accept-Ranges, Content-Range, ETag, Last-Modified, X-Set-Cookie`.
+> * Optional `SessionDO` for cookies; emit `X-Set-Cookie`.
+> * Include `wrangler.toml` with required bindings.
+
+---
+
+## Visual — High‑level Separation
+
+```mermaid
+flowchart LR
+  subgraph RepoA[Repo A: connector-router-ui (GitHub Pages)]
+    A1[React UI: ConnectorApp]
+    A2[SandboxPage / CookieStore / UrlHistory]
+    A3[Service Worker: proxy-sw]
+  end
+
+  subgraph RepoB[Repo B: router-worker-edge (Cloudflare Workers)]
+    B1[GET /p — media/GET/HEAD]
+    B2[POST /fetch — JSON control]
+    B3[(optional) SessionDO — cookies per sid]
+  end
+
+  A1 -->|/p, /fetch HTTP| B1
+  A1 -->|/p, /fetch HTTP| B2
+```
+
+---
