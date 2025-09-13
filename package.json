@@ -1,0 +1,27 @@
+{
+  "name": "cf-worker-router",
+  "version": "1.0.0",
+  "description": "",
+  "main": "worker.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "wrangler dev",
+    "deploy": "wrangler publish",
+    "login": "wrangler login"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZihaoFU245/cf-worker-router.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/ZihaoFU245/cf-worker-router/issues"
+  },
+  "homepage": "https://github.com/ZihaoFU245/cf-worker-router#readme",
+  "devDependencies": {
+    "wrangler": "^4.36.0"
+  }
+}
