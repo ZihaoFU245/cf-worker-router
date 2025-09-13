@@ -1,4 +1,17 @@
-name = "magic-test"
-main = "worker.js"
+name = "router-worker-edge"
+main = "src/index.ts"
 compatibility_date = "2024-09-13"
 
+# Set to your Connector origin for CORS pinning. Use "*" for open CORS (no credentials).
+[vars]
+CONNECTOR_ORIGIN = "*"
+
+# Optional Durable Object binding for cookie sessions. Uncomment to enable.
+# [durable_objects]
+# bindings = [
+#   { name = "SESSION_DO", class_name = "SessionDO" }
+# ]
+
+# [[migrations]]
+# tag = "v1"
+# new_classes = ["SessionDO"]
