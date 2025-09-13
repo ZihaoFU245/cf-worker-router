@@ -1,4 +1,4 @@
-name = "router-worker-edge"
+name = "magic-test"
 main = "src/index.ts"
 compatibility_date = "2024-09-13"
 
