@@ -12,6 +12,12 @@ Repository State (router-worker-edge)
 - Config: `wrangler.toml` (`CONNECTOR_ORIGIN`, optional DO binding scaffold)
 - README: usage, methods, examples
 
+Newly Added
+- Default Chrome-like User-Agent for upstream requests to avoid 405/412 responses from some origins that reject generic UAs.
+- Behavior:
+  - `/p`: forwards incoming UA if present; otherwise sets a default Chrome UA.
+  - `/fetch`: if the incoming JSON `headers` includes a `User-Agent`, it is forwarded; otherwise a default Chrome UA is applied.
+
 Endpoints & Behavior
 - `/p` (GET|HEAD):
   - Query: `sid`, `u` where `u` is base64url(absolute https URL)
@@ -50,4 +56,3 @@ Verification Steps
 
 Status
 - No functional changes required in Repo B at this time. Recommend pinning CORS, optionally enabling the DO, and removing the unused `worker.js` artifact.
-

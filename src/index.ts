@@ -8,6 +8,8 @@ type Bindings = {
 } & Partial<EnvWithDO>;
 
 const app = new Hono<{ Bindings: Bindings }>();
+const DEFAULT_UA =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 function withCors(h: Headers, origin: string | undefined) {
   appendCors(h, origin || '*');
@@ -48,6 +50,8 @@ async function handleP(c: any) {
   // Pass through Range if present
   const range = c.req.header('range');
   if (range) upstreamHeaders.set('range', range);
+  // Ensure UA present (some origins 405/412 without a browser-like UA)
+  if (!upstreamHeaders.has('user-agent')) upstreamHeaders.set('user-agent', DEFAULT_UA);
 
   // If DO is present and sid + origin available, attach cookie
   const origin = getOriginFor(target);
@@ -78,7 +82,8 @@ async function handleP(c: any) {
 }
 
 app.get('/p', handleP);
-app.head('/p', handleP);
+// Hono type may not expose .head(); use .on for HEAD
+app.on('HEAD', '/p', handleP as any);
 
 app.post('/fetch', async (c) => {
   const allowOrigin = c.env.CONNECTOR_ORIGIN || '*';
@@ -111,6 +116,8 @@ app.post('/fetch', async (c) => {
   }
 
   const upstreamHeaders = filterRequestHeaders(new Headers(headers as Record<string, string>));
+  // Respect provided UA if any; otherwise set a default Chrome UA
+  if (!upstreamHeaders.has('user-agent')) upstreamHeaders.set('user-agent', DEFAULT_UA);
   const origin = getOriginFor(target);
   if (sid && origin && c.env.SESSION_DO) {
     const cookie = await getCookieHeaderFromDO(c.env as any, sid, origin);
