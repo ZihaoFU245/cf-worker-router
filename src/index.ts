@@ -21,7 +21,7 @@ app.options('/fetch', (c) => {
   return preflightResponse(c.env.CONNECTOR_ORIGIN || '*');
 });
 
-app.get('/p', async (c) => {
+async function handleP(c: any) {
   const allowOrigin = c.env.CONNECTOR_ORIGIN || '*';
   const sid = c.req.query('sid') || '';
   const uParam = c.req.query('u') || '';
@@ -75,7 +75,10 @@ app.get('/p', async (c) => {
   if (xsc) outHeaders.set('X-Set-Cookie', xsc);
   withCors(outHeaders, allowOrigin);
   return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: outHeaders });
-});
+}
+
+app.get('/p', handleP);
+app.head('/p', handleP);
 
 app.post('/fetch', async (c) => {
   const allowOrigin = c.env.CONNECTOR_ORIGIN || '*';
