@@ -7,6 +7,24 @@ export const base64urlDecode = (input: string): string => {
   return decoded;
 };
 
+export const base64urlDecodeToUint8Array = (input: string): Uint8Array => {
+  const decoded = base64urlDecode(input);
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) {
+    bytes[i] = decoded.charCodeAt(i);
+  }
+  return bytes;
+};
+
+export const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
+
 export const isHttpsAbsolute = (s: string): boolean => {
   try {
     const u = new URL(s);
@@ -40,6 +58,7 @@ export const safeResponseHeaders = [
   'content-range',
   'etag',
   'last-modified',
+  'x-set-cookie',
 ];
 
 export function filterRequestHeaders(input: Headers): Headers {
@@ -60,6 +79,28 @@ export function filterResponseHeaders(input: Headers): Headers {
     if (v !== null) out.set(k, v);
   });
   return out;
+}
+
+export const BROWSER_HEADER_DEFAULTS: Record<string, string> = {
+  'accept':
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+  'accept-language': 'en-US,en;q=0.9',
+};
+
+export function applyBrowserHeaderDefaults(headers: Headers) {
+  for (const [key, value] of Object.entries(BROWSER_HEADER_DEFAULTS)) {
+    if (!headers.has(key)) {
+      headers.set(key, value);
+    }
+  }
+}
+
+export function headersToObject(headers: Headers): Record<string, string> {
+  const record: Record<string, string> = {};
+  headers.forEach((value, key) => {
+    record[key] = value;
+  });
+  return record;
 }
 
 export function appendCors(headers: Headers, allowOrigin: string) {
