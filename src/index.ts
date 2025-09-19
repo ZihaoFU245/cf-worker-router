@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import { base64urlDecode, filterRequestHeaders, filterResponseHeaders, isHttpsAbsolute, appendCors, preflightResponse, parseSetCookieHeaders, urlEncodeXSetCookie, getOriginFor } from './utils';
+import { ResourceUrlRewriter } from './html_rewriter';
 import type { EnvWithDO } from './session_do';
 import { getCookieHeaderFromDO, mergeSetCookiesToDO } from './session_do';
 
@@ -148,6 +149,31 @@ app.post('/fetch', async (c) => {
   const xsc = urlEncodeXSetCookie(setCookies);
   if (xsc) outHeaders.set('X-Set-Cookie', xsc);
   withCors(outHeaders, allowOrigin);
+
+  // 检查是否为 HTML 响应，若是则用 HTMLRewriter 重写资源路径
+  const ct = resp.headers.get('content-type') || '';
+  if (ct.includes('text/html')) {
+    // 获取 worker base
+    // 自动推断 workerBase（当前请求的协议+主机）
+    const url = new URL(c.req.url);
+    const workerBase = url.origin;
+    const rewriter = new HTMLRewriter();
+    const sidParam = sid || '';
+    const urlRewriter = new ResourceUrlRewriter(target, sidParam, workerBase);
+    rewriter.on('img[src]', urlRewriter.elementHandler('src'));
+    rewriter.on('script[src]', urlRewriter.elementHandler('src'));
+    rewriter.on('link[href]', urlRewriter.elementHandler('href'));
+    rewriter.on('audio[src]', urlRewriter.elementHandler('src'));
+    rewriter.on('video[src]', urlRewriter.elementHandler('src'));
+    rewriter.on('source[src]', urlRewriter.elementHandler('src'));
+    rewriter.on('iframe[src]', urlRewriter.elementHandler('src'));
+    // 可扩展更多标签
+    return rewriter.transform(new Response(resp.body, {
+      status: resp.status,
+      statusText: resp.statusText,
+      headers: outHeaders
+    }));
+  }
   return new Response(resp.body, { status: resp.status, statusText: resp.statusText, headers: outHeaders });
 });
 
