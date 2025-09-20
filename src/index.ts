@@ -339,7 +339,7 @@ app.post('/dispatch', async (c) => {
     for (let i = 0; i < requests.length; i++) {
       const unit = requests[i];
       // sequential to preserve cookie ordering
-      // eslint-disable-next-line no-await-in-loop
+      // eslint-disable-next-line no-await-in-loop -- Sequential execution required for cookie ordering
       results.push(await execUnit(unit, i));
     }
   } else {
