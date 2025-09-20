@@ -12,6 +12,17 @@ bindings = [
 	{ name = "SESSION_DO", class_name = "SessionDO" }
 ]
 
-[[migrations]]
+[env.production]
+name = "router-worker-edge-production"
+# Vars are not inherited by environments; repeat here or set a real origin for prod.
+[env.production.vars]
+CONNECTOR_ORIGIN = "*"
+
+[env.production.durable_objects]
+bindings = [
+	{ name = "SESSION_DO", class_name = "SessionDO" }
+]
+
+[[env.production.migrations]]
 tag = "v1"
-new_classes = ["SessionDO"]
+new_sqlite_classes = ["SessionDO"]
