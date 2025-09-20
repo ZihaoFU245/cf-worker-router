@@ -7,6 +7,24 @@ export const base64urlDecode = (input: string): string => {
   return decoded;
 };
 
+export const base64urlDecodeToUint8Array = (input: string): Uint8Array => {
+  const decoded = base64urlDecode(input);
+  const bytes = new Uint8Array(decoded.length);
+  for (let i = 0; i < decoded.length; i++) {
+    bytes[i] = decoded.charCodeAt(i);
+  }
+  return bytes;
+};
+
+export const arrayBufferToBase64 = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary);
+};
+
 export const isHttpsAbsolute = (s: string): boolean => {
   try {
     const u = new URL(s);
@@ -40,6 +58,7 @@ export const safeResponseHeaders = [
   'content-range',
   'etag',
   'last-modified',
+  'x-set-cookie',
 ];
 
 export function filterRequestHeaders(input: Headers): Headers {
@@ -62,22 +81,53 @@ export function filterResponseHeaders(input: Headers): Headers {
   return out;
 }
 
+export const BROWSER_HEADER_DEFAULTS: Record<string, string> = {
+  'accept':
+    'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+  'accept-language': 'en-US,en;q=0.9',
+};
+
+export function applyBrowserHeaderDefaults(headers: Headers) {
+  for (const [key, value] of Object.entries(BROWSER_HEADER_DEFAULTS)) {
+    if (!headers.has(key)) {
+      headers.set(key, value);
+    }
+  }
+}
+
+export function headersToObject(headers: Headers): Record<string, string[]> {
+  const record: Record<string, string[]> = {};
+  headers.forEach((value, key) => {
+    if (!record[key]) {
+      record[key] = [];
+    }
+    record[key].push(value);
+  });
+  return record;
+}
+
 export function appendCors(headers: Headers, allowOrigin: string) {
   headers.set('Access-Control-Allow-Origin', allowOrigin || '*');
   headers.set(
     'Access-Control-Expose-Headers',
     'Content-Type, Content-Length, Accept-Ranges, Content-Range, ETag, Last-Modified, X-Set-Cookie',
   );
+  // Help caches and browsers handle per-origin CORS correctly
+  headers.append('Vary', 'Origin');
 }
 
-export function preflightResponse(allowOrigin: string): Response {
+export function preflightResponse(allowOrigin: string, allowHeaders?: string): Response {
+  const allowHeadersValue = allowHeaders && allowHeaders.trim().length > 0 ? allowHeaders : 'Content-Type';
   return new Response(null, {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': allowOrigin || '*',
       'Access-Control-Allow-Methods': 'GET,HEAD,POST,OPTIONS',
-      'Access-Control-Allow-Headers': '*',
+      // Echo requested headers where possible for broader browser compatibility
+      'Access-Control-Allow-Headers': allowHeadersValue,
       'Access-Control-Max-Age': '86400',
+      // Vary to ensure caches differentiate by Origin and requested headers
+      'Vary': 'Origin, Access-Control-Request-Headers',
     },
   });
 }
