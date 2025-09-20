@@ -58,15 +58,18 @@ function withCors(h: Headers, origin: string | undefined) {
 }
 
 app.options('/p', (c) => {
-  return preflightResponse(c.env.CONNECTOR_ORIGIN || '*');
+  const reqHeaders = c.req.header('access-control-request-headers') || 'Content-Type';
+  return preflightResponse(c.env.CONNECTOR_ORIGIN || '*', reqHeaders);
 });
 
 app.options('/fetch', (c) => {
-  return preflightResponse(c.env.CONNECTOR_ORIGIN || '*');
+  const reqHeaders = c.req.header('access-control-request-headers') || 'Content-Type';
+  return preflightResponse(c.env.CONNECTOR_ORIGIN || '*', reqHeaders);
 });
 
 app.options('/dispatch', (c) => {
-  return preflightResponse(c.env.CONNECTOR_ORIGIN || '*');
+  const reqHeaders = c.req.header('access-control-request-headers') || 'Content-Type';
+  return preflightResponse(c.env.CONNECTOR_ORIGIN || '*', reqHeaders);
 });
 
 async function handleP(c: any) {
@@ -105,7 +108,17 @@ async function handleP(c: any) {
     redirect: 'follow',
   };
 
-  const resp = await fetch(target, upstreamReqInit);
+  let resp: Response;
+  try {
+    resp = await fetch(target, upstreamReqInit);
+  } catch (err) {
+    const h = new Headers({ 'Content-Type': 'text/plain' });
+    withCors(h, allowOrigin);
+    return new Response(
+      err instanceof Error ? `Upstream fetch error: ${err.message}` : 'Upstream fetch error',
+      { status: 502, headers: h },
+    );
+  }
 
   // Merge Set-Cookie into DO and emit X-Set-Cookie
   const setCookies = parseSetCookieHeaders(resp.headers);
@@ -167,7 +180,17 @@ app.post('/fetch', async (c) => {
     redirect: 'follow',
   };
 
-  const resp = await fetch(target, upstreamReq);
+  let resp: Response;
+  try {
+    resp = await fetch(target, upstreamReq);
+  } catch (err) {
+    const h = new Headers({ 'Content-Type': 'text/plain' });
+    withCors(h, allowOrigin);
+    return new Response(
+      err instanceof Error ? `Upstream fetch error: ${err.message}` : 'Upstream fetch error',
+      { status: 502, headers: h },
+    );
+  }
   const setCookies = parseSetCookieHeaders(resp.headers);
   const outHeaders = filterResponseHeaders(resp.headers);
   await persistSetCookies(c.env, sid, origin, setCookies);

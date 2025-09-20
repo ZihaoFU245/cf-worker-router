@@ -112,16 +112,22 @@ export function appendCors(headers: Headers, allowOrigin: string) {
     'Access-Control-Expose-Headers',
     'Content-Type, Content-Length, Accept-Ranges, Content-Range, ETag, Last-Modified, X-Set-Cookie',
   );
+  // Help caches and browsers handle per-origin CORS correctly
+  headers.append('Vary', 'Origin');
 }
 
-export function preflightResponse(allowOrigin: string): Response {
+export function preflightResponse(allowOrigin: string, allowHeaders?: string): Response {
+  const allowHeadersValue = allowHeaders && allowHeaders.trim().length > 0 ? allowHeaders : 'Content-Type';
   return new Response(null, {
     status: 204,
     headers: {
       'Access-Control-Allow-Origin': allowOrigin || '*',
       'Access-Control-Allow-Methods': 'GET,HEAD,POST,OPTIONS',
-      'Access-Control-Allow-Headers': '*',
+      // Echo requested headers where possible for broader browser compatibility
+      'Access-Control-Allow-Headers': allowHeadersValue,
       'Access-Control-Max-Age': '86400',
+      // Vary to ensure caches differentiate by Origin and requested headers
+      'Vary': 'Origin, Access-Control-Request-Headers',
     },
   });
 }

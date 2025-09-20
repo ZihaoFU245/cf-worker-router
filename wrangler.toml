@@ -6,12 +6,12 @@ compatibility_date = "2024-09-13"
 [vars]
 CONNECTOR_ORIGIN = "*"
 
-# Optional Durable Object binding for cookie sessions. Uncomment to enable.
-# [durable_objects]
-# bindings = [
-#   { name = "SESSION_DO", class_name = "SessionDO" }
-# ]
+# Optional Durable Object binding for cookie sessions. Enable to persist cookies per sid.
+[durable_objects]
+bindings = [
+	{ name = "SESSION_DO", class_name = "SessionDO" }
+]
 
-# [[migrations]]
-# tag = "v1"
-# new_classes = ["SessionDO"]
+[[migrations]]
+tag = "v1"
+new_classes = ["SessionDO"]
