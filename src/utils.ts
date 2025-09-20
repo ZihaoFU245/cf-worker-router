@@ -95,10 +95,13 @@ export function applyBrowserHeaderDefaults(headers: Headers) {
   }
 }
 
-export function headersToObject(headers: Headers): Record<string, string> {
-  const record: Record<string, string> = {};
+export function headersToObject(headers: Headers): Record<string, string[]> {
+  const record: Record<string, string[]> = {};
   headers.forEach((value, key) => {
-    record[key] = value;
+    if (!record[key]) {
+      record[key] = [];
+    }
+    record[key].push(value);
   });
   return record;
 }
