@@ -349,7 +349,7 @@ app.post('/dispatch', async (c) => {
 
   const responseHeaders = new Headers({ 'Content-Type': 'application/json' });
   if (aggregateXSetCookies.length) {
-    responseHeaders.set('X-Set-Cookie', aggregateXSetCookies.join(','));
+    aggregateXSetCookies.forEach((cookie) => responseHeaders.append('X-Set-Cookie', cookie));
   }
   withCors(responseHeaders, allowOrigin);
   const payload = {
